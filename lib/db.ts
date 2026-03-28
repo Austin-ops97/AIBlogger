@@ -3,6 +3,25 @@ import { Pool } from "@neondatabase/serverless";
 let pool: Pool | null = null;
 let initPromise: Promise<void> | null = null;
 
+/**
+ * Neon + Vercel templates often add channel_binding=require. The serverless
+ * Pool (node-postgres over WebSockets) commonly fails with that param; strip it.
+ */
+function normalizeConnectionString(raw: string): string {
+  const s = raw.trim();
+  if (!s) return s;
+  try {
+    const u = new URL(s);
+    u.searchParams.delete("channel_binding");
+    if (!u.searchParams.has("sslmode")) {
+      u.searchParams.set("sslmode", "require");
+    }
+    return u.toString();
+  } catch {
+    return s.replace(/([?&])channel_binding=[^&]*&?/g, "$1").replace(/\?&/, "?").replace(/&&/g, "&").replace(/[?&]$/, "");
+  }
+}
+
 /** Vercel Postgres / Neon injects one of these when Storage is connected. */
 export function getPostgresConnectionString(): string {
   return (
@@ -23,12 +42,13 @@ export function getDatabaseConfigurationIssue(): string | null {
 }
 
 function getPool(): Pool {
-  const conn = getPostgresConnectionString();
-  if (!conn) {
+  const raw = getPostgresConnectionString();
+  if (!raw) {
     throw new Error(
       getDatabaseConfigurationIssue() || "Database is not configured."
     );
   }
+  const conn = normalizeConnectionString(raw);
   if (!pool) {
     pool = new Pool({ connectionString: conn });
   }
