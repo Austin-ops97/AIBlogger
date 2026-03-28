@@ -11,8 +11,9 @@ export async function middleware(request: NextRequest) {
     request.method !== "GET" &&
     pathname !== "/api/auth/login";
   const isAiApi = pathname.startsWith("/api/ai");
+  const isSettingsApi = pathname.startsWith("/api/settings");
 
-  if (isAdminPage || isAdminApi || isAiApi) {
+  if (isAdminPage || isAdminApi || isAiApi || isSettingsApi) {
     const token = request.cookies.get(COOKIE_NAME)?.value;
 
     if (!token || !(await verifyToken(token))) {
@@ -31,5 +32,7 @@ export const config = {
     "/admin/:path*",
     "/api/posts/:path*",
     "/api/ai/:path*",
+    "/api/settings",
+    "/api/settings/:path*",
   ],
 };

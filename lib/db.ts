@@ -78,6 +78,40 @@ async function ensureSchema(): Promise<void> {
   await q.query(
     `CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC)`
   );
+  await q.query(`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+}
+
+export async function getAppSetting(key: string): Promise<string | null> {
+  const q = await ensureReady();
+  const rows = await q.query(
+    "SELECT value FROM app_settings WHERE key = $1",
+    [key]
+  );
+  const row = rows[0] as { value?: string } | undefined;
+  return row?.value ?? null;
+}
+
+export async function setAppSetting(key: string, value: string): Promise<void> {
+  const q = await ensureReady();
+  await q.query(
+    `INSERT INTO app_settings (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET
+       value = EXCLUDED.value,
+       updated_at = NOW()`,
+    [key, value]
+  );
+}
+
+export async function deleteAppSetting(key: string): Promise<void> {
+  const q = await ensureReady();
+  await q.query("DELETE FROM app_settings WHERE key = $1", [key]);
 }
 
 async function ensureReady(): Promise<NeonQueryFunction<false, false>> {

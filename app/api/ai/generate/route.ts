@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+import { resolveAnthropicApiKey } from "@/lib/anthropic-key";
 
 async function fetchPageContent(url: string): Promise<string> {
   const response = await fetch(url, {
@@ -48,15 +45,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
 
-    if (!process.env.ANTHROPIC_API_KEY) {
+    const apiKey = await resolveAnthropicApiKey();
+    if (!apiKey) {
       return NextResponse.json(
         {
           error:
-            "ANTHROPIC_API_KEY is not configured. Please add it to your .env.local file.",
+            "No Anthropic API key. Add one in Admin → Settings or set ANTHROPIC_API_KEY on the server.",
         },
         { status: 503 }
       );
     }
+
+    const client = new Anthropic({ apiKey });
 
     // Fetch the page content
     let pageContent: string;
