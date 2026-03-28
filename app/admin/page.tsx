@@ -1,5 +1,6 @@
-import { getAllPosts } from "@/lib/db";
+import { getAllPosts, getDatabaseConfigurationIssue } from "@/lib/db";
 import { getAuthUser } from "@/lib/auth-token";
+import DeploymentDbNotice from "@/components/DeploymentDbNotice";
 import Link from "next/link";
 import AdminPostRow from "@/components/AdminPostRow";
 
@@ -7,6 +8,20 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const user = await getAuthUser();
+  const dbIssue = getDatabaseConfigurationIssue();
+  if (dbIssue) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 py-10">
+        <h1 className="text-2xl font-bold text-slate-900 mb-1">Admin</h1>
+        <p className="text-slate-500 text-sm mb-6">
+          Signed in as{" "}
+          <span className="font-medium text-indigo-600">{user?.username}</span>
+        </p>
+        <DeploymentDbNotice message={dbIssue} />
+      </div>
+    );
+  }
+
   const posts = await getAllPosts();
 
   return (

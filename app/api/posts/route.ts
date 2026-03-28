@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllPosts, createPost, isSlugTaken } from "@/lib/db";
+import {
+  getAllPosts,
+  createPost,
+  isSlugTaken,
+  getDatabaseConfigurationIssue,
+} from "@/lib/db";
 import slugify from "slugify";
 
 export async function GET() {
   try {
+    const issue = getDatabaseConfigurationIssue();
+    if (issue) {
+      return NextResponse.json({ error: issue }, { status: 503 });
+    }
     const posts = await getAllPosts();
     return NextResponse.json(posts);
   } catch (error) {
@@ -13,6 +22,10 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const issue = getDatabaseConfigurationIssue();
+    if (issue) {
+      return NextResponse.json({ error: issue }, { status: 503 });
+    }
     const body = await request.json();
     const { title, content, excerpt, source_url } = body;
 

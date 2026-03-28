@@ -5,15 +5,41 @@ import fs from "fs";
 let client: Client | null = null;
 let initPromise: Promise<void> | null = null;
 
-function getDatabaseUrl(): string {
-  const remote =
-    process.env.TURSO_DATABASE_URL || process.env.LIBSQL_DATABASE_URL;
-  const onVercel = process.env.VERCEL === "1";
-  if (onVercel && !remote) {
-    throw new Error(
-      "Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in Vercel (Project → Settings → Environment Variables). Create a free DB: https://docs.turso.tech"
-    );
+function remoteDatabaseUrl(): string {
+  return (
+    process.env.TURSO_DATABASE_URL ||
+    process.env.LIBSQL_DATABASE_URL ||
+    ""
+  ).trim();
+}
+
+function remoteAuthToken(): string {
+  return (
+    process.env.TURSO_AUTH_TOKEN ||
+    process.env.LIBSQL_AUTH_TOKEN ||
+    ""
+  ).trim();
+}
+
+/** On Vercel, returns a user-facing message if Turso env vars are missing; otherwise null. */
+export function getDatabaseConfigurationIssue(): string | null {
+  if (process.env.VERCEL !== "1") return null;
+  if (!remoteDatabaseUrl()) {
+    return "Add TURSO_DATABASE_URL in Vercel (Project → Settings → Environment Variables), then redeploy.";
   }
+  if (!remoteAuthToken()) {
+    return "Add TURSO_AUTH_TOKEN in Vercel (create a token with turso db tokens create), then redeploy.";
+  }
+  return null;
+}
+
+function getDatabaseUrl(): string {
+  if (process.env.VERCEL === "1") {
+    const issue = getDatabaseConfigurationIssue();
+    if (issue) throw new Error(issue);
+    return remoteDatabaseUrl();
+  }
+  const remote = remoteDatabaseUrl();
   if (remote) return remote;
   const dataDir = path.join(process.cwd(), "data");
   if (!fs.existsSync(dataDir)) {
@@ -26,8 +52,7 @@ function getDatabaseUrl(): string {
 function getClient(): Client {
   if (client) return client;
   const url = getDatabaseUrl();
-  const authToken =
-    process.env.TURSO_AUTH_TOKEN || process.env.LIBSQL_AUTH_TOKEN;
+  const authToken = remoteAuthToken();
   client = createClient({
     url,
     ...(authToken ? { authToken } : {}),

@@ -1,10 +1,28 @@
-import { getAllPosts } from "@/lib/db";
+import { getAllPosts, getDatabaseConfigurationIssue } from "@/lib/db";
 import PostCard from "@/components/PostCard";
+import DeploymentDbNotice from "@/components/DeploymentDbNotice";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  const dbIssue = getDatabaseConfigurationIssue();
+  if (dbIssue) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-12">
+        <div className="text-center mb-10">
+          <h1 className="text-4xl font-bold text-slate-900 mb-2">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">
+              AIBlogger
+            </span>
+          </h1>
+          <p className="text-slate-500">Finish database setup to go live.</p>
+        </div>
+        <DeploymentDbNotice message={dbIssue} />
+      </div>
+    );
+  }
+
   const posts = await getAllPosts();
 
   return (

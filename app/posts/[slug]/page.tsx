@@ -1,5 +1,6 @@
-import { getPostBySlug } from "@/lib/db";
+import { getPostBySlug, getDatabaseConfigurationIssue } from "@/lib/db";
 import { notFound } from "next/navigation";
+import DeploymentDbNotice from "@/components/DeploymentDbNotice";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,15 @@ function formatDate(dateStr: string) {
 }
 
 export default async function PostPage({ params }: Props) {
+  const dbIssue = getDatabaseConfigurationIssue();
+  if (dbIssue) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-12">
+        <DeploymentDbNotice message={dbIssue} />
+      </div>
+    );
+  }
+
   const post = await getPostBySlug(params.slug);
 
   if (!post) {
