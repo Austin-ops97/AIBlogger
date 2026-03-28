@@ -125,9 +125,32 @@ CONTENT:
     });
   } catch (error) {
     console.error("AI generation error:", error);
-    if (error instanceof Error && error.message.includes("API key")) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const lower = msg.toLowerCase();
+    if (
+      lower.includes("api key") ||
+      lower.includes("x-api-key") ||
+      lower.includes("authentication") ||
+      msg.includes("401")
+    ) {
       return NextResponse.json(
-        { error: "Invalid or missing Anthropic API key" },
+        {
+          error:
+            "Anthropic rejected the API key. In Admin → Settings, paste the full secret key from console.anthropic.com (starts with sk-ant-), one line, no quotes.",
+        },
+        { status: 503 }
+      );
+    }
+    if (
+      lower.includes("not the expected") ||
+      lower.includes("expected string") ||
+      lower.includes("invalid_request_error")
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "The request was rejected, often because the API key is incomplete or malformed. Copy the entire secret key again (sk-ant-…), with no spaces or line breaks. Do not use a “publishable” key — use the secret key.",
+        },
         { status: 503 }
       );
     }

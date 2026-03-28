@@ -9,12 +9,15 @@ import {
   ANTHROPIC_SETTING_KEY,
   resolveAnthropicApiKey,
   maskApiKey,
+  normalizeAnthropicApiKey,
+  looksLikeAnthropicSecretKey,
 } from "@/lib/anthropic-key";
 
 export async function GET() {
   try {
     if (getDatabaseConfigurationIssue()) {
-      const envKey = process.env.ANTHROPIC_API_KEY?.trim() || null;
+      const envKey =
+        normalizeAnthropicApiKey(process.env.ANTHROPIC_API_KEY ?? "") || null;
       return NextResponse.json({
         hasDatabaseKey: false,
         hasEnvironmentKey: Boolean(envKey),
@@ -26,8 +29,10 @@ export async function GET() {
       });
     }
 
-    const dbKey = (await getAppSetting(ANTHROPIC_SETTING_KEY))?.trim() || null;
-    const envKey = process.env.ANTHROPIC_API_KEY?.trim() || null;
+    const dbKeyRaw = await getAppSetting(ANTHROPIC_SETTING_KEY);
+    const dbKey = normalizeAnthropicApiKey(dbKeyRaw ?? "") || null;
+    const envKey =
+      normalizeAnthropicApiKey(process.env.ANTHROPIC_API_KEY ?? "") || null;
     const effective = await resolveAnthropicApiKey();
 
     return NextResponse.json({
@@ -60,13 +65,24 @@ export async function PUT(request: NextRequest) {
 
     const body = await request.json();
     const raw = typeof body.anthropicApiKey === "string" ? body.anthropicApiKey : "";
+    const normalized = normalizeAnthropicApiKey(raw);
 
-    if (!raw.trim()) {
+    if (!normalized) {
       await deleteAppSetting(ANTHROPIC_SETTING_KEY);
       return NextResponse.json({ ok: true, cleared: true });
     }
 
-    await setAppSetting(ANTHROPIC_SETTING_KEY, raw.trim());
+    if (!looksLikeAnthropicSecretKey(normalized)) {
+      return NextResponse.json(
+        {
+          error:
+            "That does not look like a full Anthropic secret key. In console.anthropic.com → API keys, create or copy the secret key. It must be one continuous line starting with sk-ant- (often sk-ant-api03-). Remove quotes, spaces, and line breaks.",
+        },
+        { status: 400 }
+      );
+    }
+
+    await setAppSetting(ANTHROPIC_SETTING_KEY, normalized);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("settings PUT:", e);

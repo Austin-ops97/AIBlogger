@@ -78,10 +78,29 @@ export default function AdminSettingsPage() {
       </Link>
 
       <h1 className="text-3xl font-bold text-slate-900 mb-2">Settings</h1>
-      <p className="text-slate-500 text-sm mb-8">
+      <p className="text-slate-500 text-sm mb-4">
         Anthropic API key for <strong>AI Review</strong>. Stored in your database;
         only admins can change it.
       </p>
+      <ul className="text-xs text-slate-500 space-y-1 mb-8 list-disc list-inside">
+        <li>
+          Use the <strong>secret</strong> key from{" "}
+          <a
+            href="https://console.anthropic.com/settings/keys"
+            className="text-indigo-600 underline"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            console.anthropic.com → API keys
+          </a>{" "}
+          (not a publishable key).
+        </li>
+        <li>
+          It must be the <strong>full</strong> key in <strong>one line</strong>, usually starting with{" "}
+          <code className="bg-slate-100 px-1 rounded">sk-ant-api03-</code>.
+        </li>
+        <li>Paste exactly what Anthropic shows — no quotes, spaces, or line breaks in the middle.</li>
+      </ul>
 
       {loading ? (
         <p className="text-slate-500 text-sm">Loading…</p>
@@ -141,18 +160,19 @@ export default function AdminSettingsPage() {
               >
                 Anthropic API key
               </label>
-              <input
+              <textarea
                 id="anthropic-key"
-                type="password"
                 autoComplete="off"
+                spellCheck={false}
+                rows={3}
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
-                placeholder="sk-ant-api03-…"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                placeholder="sk-ant-api03-… (paste full key, one line)"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-y min-h-[5rem]"
               />
               <p className="text-xs text-slate-400 mt-1.5">
-                Leave empty and save to remove the stored key and fall back to the server
-                environment variable.
+                Leave empty and save to remove the stored key and fall back to{" "}
+                <code className="text-[11px]">ANTHROPIC_API_KEY</code> on the server.
               </p>
             </div>
 
