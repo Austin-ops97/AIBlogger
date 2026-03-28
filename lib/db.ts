@@ -1,100 +1,73 @@
-import { createClient, type Client } from "@libsql/client";
-import path from "path";
-import fs from "fs";
+import { Pool } from "@neondatabase/serverless";
 
-let client: Client | null = null;
+let pool: Pool | null = null;
 let initPromise: Promise<void> | null = null;
 
-function remoteDatabaseUrl(): string {
+/** Vercel Postgres / Neon injects one of these when Storage is connected. */
+export function getPostgresConnectionString(): string {
   return (
-    process.env.TURSO_DATABASE_URL ||
-    process.env.LIBSQL_DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.DATABASE_URL ||
     ""
   ).trim();
 }
 
-function remoteAuthToken(): string {
-  return (
-    process.env.TURSO_AUTH_TOKEN ||
-    process.env.LIBSQL_AUTH_TOKEN ||
-    ""
-  ).trim();
-}
-
-/** On Vercel, returns a user-facing message if Turso env vars are missing; otherwise null. */
+/** Returns null when Postgres is configured; otherwise a short setup message. */
 export function getDatabaseConfigurationIssue(): string | null {
-  if (process.env.VERCEL !== "1") return null;
-  if (!remoteDatabaseUrl()) {
-    return "Add TURSO_DATABASE_URL in Vercel (Project → Settings → Environment Variables), then redeploy.";
-  }
-  if (!remoteAuthToken()) {
-    return "Add TURSO_AUTH_TOKEN in Vercel (create a token with turso db tokens create), then redeploy.";
-  }
-  return null;
-}
-
-function getDatabaseUrl(): string {
+  if (getPostgresConnectionString()) return null;
   if (process.env.VERCEL === "1") {
-    const issue = getDatabaseConfigurationIssue();
-    if (issue) throw new Error(issue);
-    return remoteDatabaseUrl();
+    return "Connect Vercel Postgres: Vercel dashboard → this project → Storage → Create / connect Postgres. That adds POSTGRES_URL automatically; then redeploy.";
   }
-  const remote = remoteDatabaseUrl();
-  if (remote) return remote;
-  const dataDir = path.join(process.cwd(), "data");
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  const filePath = path.join(dataDir, "blog.db");
-  return `file:${filePath}`;
+  return "Set POSTGRES_URL or DATABASE_URL in .env.local (run `vercel env pull` after connecting Storage on Vercel, or use a local Postgres URL).";
 }
 
-function getClient(): Client {
-  if (client) return client;
-  const url = getDatabaseUrl();
-  const authToken = remoteAuthToken();
-  client = createClient({
-    url,
-    ...(authToken ? { authToken } : {}),
-  });
-  return client;
+function getPool(): Pool {
+  const conn = getPostgresConnectionString();
+  if (!conn) {
+    throw new Error(
+      getDatabaseConfigurationIssue() || "Database is not configured."
+    );
+  }
+  if (!pool) {
+    pool = new Pool({ connectionString: conn });
+  }
+  return pool;
 }
 
-async function ensureSchema(c: Client): Promise<void> {
-  await c.execute(`
+async function ensureSchema(): Promise<void> {
+  const p = getPool();
+  await p.query(`
     CREATE TABLE IF NOT EXISTS posts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       title TEXT NOT NULL,
       slug TEXT UNIQUE NOT NULL,
       content TEXT NOT NULL,
       excerpt TEXT DEFAULT '',
       source_url TEXT DEFAULT '',
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
-  await c.execute(
+  await p.query(
     `CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug)`
   );
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at)`
+  await p.query(
+    `CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC)`
   );
-  if (urlIsFile(getDatabaseUrl())) {
-    await c.execute("PRAGMA journal_mode = WAL");
-  }
 }
 
-function urlIsFile(url: string): boolean {
-  return url.startsWith("file:");
-}
-
-async function ensureReady(): Promise<Client> {
-  const c = getClient();
+async function ensureReady(): Promise<Pool> {
   if (!initPromise) {
-    initPromise = ensureSchema(c);
+    initPromise = ensureSchema();
   }
   await initPromise;
-  return c;
+  return getPool();
+}
+
+function ts(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  return String(value ?? "");
 }
 
 function rowToPost(row: Record<string, unknown>): Post {
@@ -105,8 +78,8 @@ function rowToPost(row: Record<string, unknown>): Post {
     content: String(row.content),
     excerpt: row.excerpt != null ? String(row.excerpt) : "",
     source_url: row.source_url != null ? String(row.source_url) : "",
-    created_at: String(row.created_at),
-    updated_at: String(row.updated_at),
+    created_at: ts(row.created_at),
+    updated_at: ts(row.updated_at),
   };
 }
 
@@ -122,40 +95,36 @@ export interface Post {
 }
 
 export async function getAllPosts(): Promise<Post[]> {
-  const c = await ensureReady();
-  const rs = await c.execute(
+  const p = await ensureReady();
+  const { rows } = await p.query(
     "SELECT * FROM posts ORDER BY created_at DESC"
   );
-  return rs.rows.map((row) => rowToPost(row as Record<string, unknown>));
+  return rows.map((row) => rowToPost(row as Record<string, unknown>));
 }
 
 export async function getPostBySlug(slug: string): Promise<Post | null> {
-  const c = await ensureReady();
-  const rs = await c.execute({
-    sql: "SELECT * FROM posts WHERE slug = ?",
-    args: [slug],
-  });
-  const row = rs.rows[0];
+  const p = await ensureReady();
+  const { rows } = await p.query("SELECT * FROM posts WHERE slug = $1", [
+    slug,
+  ]);
+  const row = rows[0];
   return row ? rowToPost(row as Record<string, unknown>) : null;
 }
 
 export async function getPostById(id: number): Promise<Post | null> {
-  const c = await ensureReady();
-  const rs = await c.execute({
-    sql: "SELECT * FROM posts WHERE id = ?",
-    args: [id],
-  });
-  const row = rs.rows[0];
+  const p = await ensureReady();
+  const { rows } = await p.query("SELECT * FROM posts WHERE id = $1", [id]);
+  const row = rows[0];
   return row ? rowToPost(row as Record<string, unknown>) : null;
 }
 
 export async function isSlugTaken(slug: string): Promise<boolean> {
-  const c = await ensureReady();
-  const rs = await c.execute({
-    sql: "SELECT id FROM posts WHERE slug = ?",
-    args: [slug],
-  });
-  return rs.rows.length > 0;
+  const p = await ensureReady();
+  const { rows } = await p.query(
+    "SELECT id FROM posts WHERE slug = $1 LIMIT 1",
+    [slug]
+  );
+  return rows.length > 0;
 }
 
 export async function createPost(data: {
@@ -165,22 +134,22 @@ export async function createPost(data: {
   excerpt: string;
   source_url?: string;
 }): Promise<Post> {
-  const c = await ensureReady();
-  const rs = await c.execute({
-    sql: `INSERT INTO posts (title, slug, content, excerpt, source_url)
-          VALUES (?, ?, ?, ?, ?)`,
-    args: [
+  const p = await ensureReady();
+  const { rows } = await p.query(
+    `INSERT INTO posts (title, slug, content, excerpt, source_url)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING *`,
+    [
       data.title,
       data.slug,
       data.content,
       data.excerpt,
       data.source_url || "",
-    ],
-  });
-  const id = Number(rs.lastInsertRowid);
-  const post = await getPostById(id);
-  if (!post) throw new Error("Failed to load post after insert");
-  return post;
+    ]
+  );
+  const row = rows[0];
+  if (!row) throw new Error("Failed to load post after insert");
+  return rowToPost(row as Record<string, unknown>);
 }
 
 export async function updatePost(
@@ -206,17 +175,25 @@ export async function updatePost(
     .filter((k) => data[k] !== undefined)
     .map((k) => [k, data[k]!] as const);
   if (entries.length === 0) return existing;
-  const c = await ensureReady();
-  const fields = entries.map(([k]) => `${k} = ?`).join(", ");
-  const values = entries.map(([, v]) => v);
-  await c.execute({
-    sql: `UPDATE posts SET ${fields}, updated_at = datetime('now') WHERE id = ?`,
-    args: [...values, id],
-  });
+
+  const p = await ensureReady();
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  let i = 1;
+  for (const [col, val] of entries) {
+    sets.push(`${col} = $${i}`);
+    values.push(val);
+    i++;
+  }
+  values.push(id);
+  await p.query(
+    `UPDATE posts SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${i}`,
+    values
+  );
   return getPostById(id);
 }
 
 export async function deletePost(id: number): Promise<void> {
-  const c = await ensureReady();
-  await c.execute({ sql: "DELETE FROM posts WHERE id = ?", args: [id] });
+  const p = await ensureReady();
+  await p.query("DELETE FROM posts WHERE id = $1", [id]);
 }
