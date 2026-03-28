@@ -1,11 +1,11 @@
-import { Pool } from "@neondatabase/serverless";
+import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 
-let pool: Pool | null = null;
+let sql: NeonQueryFunction<false, false> | null = null;
 let initPromise: Promise<void> | null = null;
 
 /**
- * Neon + Vercel templates often add channel_binding=require. The serverless
- * Pool (node-postgres over WebSockets) commonly fails with that param; strip it.
+ * Neon + Vercel templates often add channel_binding=require. Stripping it keeps
+ * URLs compatible across clients (HTTP driver is tolerant either way).
  */
 function normalizeConnectionString(raw: string): string {
   const s = raw.trim();
@@ -22,12 +22,15 @@ function normalizeConnectionString(raw: string): string {
   }
 }
 
-/** Vercel Postgres / Neon injects one of these when Storage is connected. */
+/**
+ * Neon / Vercel: DATABASE_URL is the primary var (see Neon + Next.js guide).
+ * POSTGRES_* are also set when Storage is connected.
+ */
 export function getPostgresConnectionString(): string {
   return (
+    process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     process.env.POSTGRES_PRISMA_URL ||
-    process.env.DATABASE_URL ||
     ""
   ).trim();
 }
@@ -36,12 +39,12 @@ export function getPostgresConnectionString(): string {
 export function getDatabaseConfigurationIssue(): string | null {
   if (getPostgresConnectionString()) return null;
   if (process.env.VERCEL === "1") {
-    return "Connect Vercel Postgres: Vercel dashboard → this project → Storage → Create / connect Postgres. That adds POSTGRES_URL automatically; then redeploy.";
+    return "Connect Neon Postgres: Vercel → this project → Storage → Neon, link the database, then redeploy.";
   }
-  return "Set POSTGRES_URL or DATABASE_URL in .env.local (run `vercel env pull` after connecting Storage on Vercel, or use a local Postgres URL).";
+  return "Set DATABASE_URL or POSTGRES_URL in .env.local (run: vercel env pull .env.development.local).";
 }
 
-function getPool(): Pool {
+function getSql(): NeonQueryFunction<false, false> {
   const raw = getPostgresConnectionString();
   if (!raw) {
     throw new Error(
@@ -49,15 +52,15 @@ function getPool(): Pool {
     );
   }
   const conn = normalizeConnectionString(raw);
-  if (!pool) {
-    pool = new Pool({ connectionString: conn });
+  if (!sql) {
+    sql = neon(conn);
   }
-  return pool;
+  return sql;
 }
 
 async function ensureSchema(): Promise<void> {
-  const p = getPool();
-  await p.query(`
+  const q = getSql();
+  await q.query(`
     CREATE TABLE IF NOT EXISTS posts (
       id SERIAL PRIMARY KEY,
       title TEXT NOT NULL,
@@ -69,20 +72,20 @@ async function ensureSchema(): Promise<void> {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
-  await p.query(
+  await q.query(
     `CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug)`
   );
-  await p.query(
+  await q.query(
     `CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC)`
   );
 }
 
-async function ensureReady(): Promise<Pool> {
+async function ensureReady(): Promise<NeonQueryFunction<false, false>> {
   if (!initPromise) {
     initPromise = ensureSchema();
   }
   await initPromise;
-  return getPool();
+  return getSql();
 }
 
 function ts(value: unknown): string {
@@ -115,32 +118,28 @@ export interface Post {
 }
 
 export async function getAllPosts(): Promise<Post[]> {
-  const p = await ensureReady();
-  const { rows } = await p.query(
-    "SELECT * FROM posts ORDER BY created_at DESC"
-  );
+  const q = await ensureReady();
+  const rows = await q.query("SELECT * FROM posts ORDER BY created_at DESC");
   return rows.map((row) => rowToPost(row as Record<string, unknown>));
 }
 
 export async function getPostBySlug(slug: string): Promise<Post | null> {
-  const p = await ensureReady();
-  const { rows } = await p.query("SELECT * FROM posts WHERE slug = $1", [
-    slug,
-  ]);
+  const q = await ensureReady();
+  const rows = await q.query("SELECT * FROM posts WHERE slug = $1", [slug]);
   const row = rows[0];
   return row ? rowToPost(row as Record<string, unknown>) : null;
 }
 
 export async function getPostById(id: number): Promise<Post | null> {
-  const p = await ensureReady();
-  const { rows } = await p.query("SELECT * FROM posts WHERE id = $1", [id]);
+  const q = await ensureReady();
+  const rows = await q.query("SELECT * FROM posts WHERE id = $1", [id]);
   const row = rows[0];
   return row ? rowToPost(row as Record<string, unknown>) : null;
 }
 
 export async function isSlugTaken(slug: string): Promise<boolean> {
-  const p = await ensureReady();
-  const { rows } = await p.query(
+  const q = await ensureReady();
+  const rows = await q.query(
     "SELECT id FROM posts WHERE slug = $1 LIMIT 1",
     [slug]
   );
@@ -154,8 +153,8 @@ export async function createPost(data: {
   excerpt: string;
   source_url?: string;
 }): Promise<Post> {
-  const p = await ensureReady();
-  const { rows } = await p.query(
+  const q = await ensureReady();
+  const rows = await q.query(
     `INSERT INTO posts (title, slug, content, excerpt, source_url)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
@@ -196,7 +195,7 @@ export async function updatePost(
     .map((k) => [k, data[k]!] as const);
   if (entries.length === 0) return existing;
 
-  const p = await ensureReady();
+  const q = await ensureReady();
   const sets: string[] = [];
   const values: unknown[] = [];
   let i = 1;
@@ -206,7 +205,7 @@ export async function updatePost(
     i++;
   }
   values.push(id);
-  await p.query(
+  await q.query(
     `UPDATE posts SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${i}`,
     values
   );
@@ -214,6 +213,6 @@ export async function updatePost(
 }
 
 export async function deletePost(id: number): Promise<void> {
-  const p = await ensureReady();
-  await p.query("DELETE FROM posts WHERE id = $1", [id]);
+  const q = await ensureReady();
+  await q.query("DELETE FROM posts WHERE id = $1", [id]);
 }
